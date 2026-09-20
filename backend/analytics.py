@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from typing import Dict, Any
+import json
 
 from config import DATA_PROCESSED
 
@@ -19,11 +20,9 @@ def cargar_datos() -> pd.DataFrame:
 def calcular_indicadores_basicos(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Calcula los indicadores principales a nivel nacional.
-    Estos números deben cuadrar con las cifras de validación del hackatón.
     """
     total = len(df)
 
-    # Tasas principales
     promovidos = (df["Resultado"] == "Promovido").sum()
     no_promovidos = (df["Resultado"] == "No promovido").sum()
     retirados = df["Resultado"].isin(["Retirado", "Retirado definitivo"]).sum()
@@ -32,16 +31,9 @@ def calcular_indicadores_basicos(df: pd.DataFrame) -> Dict[str, Any]:
     tasa_no_promocion = no_promovidos / total * 100
     tasa_retiro = retirados / total * 100
 
-    # Distribución por nivel
     por_nivel = df["Nivel"].value_counts(normalize=True).mul(100).round(1).to_dict()
-
-    # Distribución por área
     por_area = df["Area"].value_counts(normalize=True).mul(100).round(1).to_dict()
-
-    # Distribución por sector
     por_sector = df["Sector"].value_counts(normalize=True).mul(100).round(1).to_dict()
-
-    # Distribución por sexo
     por_sexo = df["Sexo"].value_counts(normalize=True).mul(100).round(1).to_dict()
 
     return {
@@ -75,7 +67,7 @@ def calcular_por_departamento(df: pd.DataFrame) -> pd.DataFrame:
     resumen["tasa_no_promocion"] = (resumen["no_promovidos"] / resumen["total"] * 100).round(1)
     resumen["tasa_retiro"] = (resumen["retirados"] / resumen["total"] * 100).round(1)
 
-    # Ordenar por tasa de retiro (de mayor a menor) para ver criticidad
+    # Ordenar por tasa de retiro (de mayor a menor)
     resumen = resumen.sort_values("tasa_retiro", ascending=False).reset_index(drop=True)
 
     return resumen
@@ -107,63 +99,86 @@ def calcular_brechas(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     }
 
 
-def generar_insights_nacionales(indicadores: Dict[str, Any], por_depto: pd.DataFrame) -> list[str]:
+def generar_insights_nacionales(indicadores: dict, por_depto: pd.DataFrame, brechas: dict) -> list[str]:
     """
-    Genera textos de insights claros y accionables para la página de Inicio.
-    Estos textos son los que el usuario lee (no solo números).
+    Genera insights accionables para la página de Inicio.
+    Cada insight tiene: Dato + Contexto + Implicación.
     """
     insights = []
 
-    # Insight 1: Panorama general
+    total = indicadores["total_estudiantes"]
+    tasa_retiro = indicadores["tasa_retiro"]
+    tasa_promocion = indicadores["tasa_promocion"]
+
+    # 1. Panorama general
     insights.append(
-        f"En 2024 se registraron **{indicadores['total_estudiantes']:,}** inscripciones en el sistema educativo formal de Guatemala. "
-        f"De ellas, el **{indicadores['tasa_promocion']}%** fue promovido, el **{indicadores['tasa_no_promocion']}%** no promovido "
-        f"y el **{indicadores['tasa_retiro']}%** se retiró."
+        f"**Panorama general:** En 2024 se registraron **{total:,}** estudiantes. "
+        f"El **{tasa_promocion}%** fue promovido y el **{tasa_retiro}%** se retiró. "
+        f"Esto significa que aproximadamente **{int(total * tasa_retiro / 100):,}** estudiantes abandonaron el ciclo escolar."
     )
 
-    # Insight 2: Dónde está la mayor pérdida
-    depto_mas_retiro = por_depto.iloc[0]
+    # 2. Departamento más crítico
+    mas_critico = por_depto.iloc[0]
+    diferencia = mas_critico["tasa_retiro"] - tasa_retiro
     insights.append(
-        f"El departamento con mayor tasa de retiro es **{depto_mas_retiro['Departamento']}** "
-        f"({depto_mas_retiro['tasa_retiro']}% ). Esto está por encima del promedio nacional."
+        f"**Zona más crítica:** **{mas_critico['Departamento']}** tiene la tasa de retiro más alta "
+        f"({mas_critico['tasa_retiro']}% ), **{diferencia:.1f} puntos por encima** del promedio nacional. "
+        f"Allí se registraron {mas_critico['total']:,} estudiantes. Es prioritario reforzar el acompañamiento en este departamento."
     )
 
-    # Insight 3: Nivel más crítico
-    # (se puede mejorar cuando tengamos el desglose por nivel + resultado)
-    insights.append(
-        "La mayor cantidad de estudiantes se concentra en **Primaria**. "
-        "Es en los niveles de Básico y Diversificado donde suele observarse mayor abandono relativo."
-    )
+    # 3. Brecha rural-urbana
+    if "area" in brechas:
+        df_area = brechas["area"]
+        rural = df_area[df_area["Area"] == "Rural"]
+        urbana = df_area[df_area["Area"] == "Urbana"]
+        if not rural.empty and not urbana.empty:
+            diff = rural["tasa_retiro"].values[0] - urbana["tasa_retiro"].values[0]
+            insights.append(
+                f"**Brecha rural-urbana:** El retiro en el área rural es **{diff:.1f} puntos más alto** que en el área urbana. "
+                f"Esta es una de las desigualdades más persistentes del sistema educativo y requiere estrategias diferenciadas."
+            )
 
-    # Insight 4: Brecha rural
-    insights.append(
-        "Más de la mitad de los estudiantes estudia en área **rural**. "
-        "Las brechas de resultados entre el área urbana y rural son uno de los puntos más importantes a monitorear."
-    )
+    # 4. Nivel más afectado
+    if "nivel" in brechas:
+        df_nivel = brechas["nivel"]
+        df_nivel_limpio = df_nivel[~df_nivel["Nivel"].isin(["Ignorado", "Desconocido"])]
+        if not df_nivel_limpio.empty:
+            nivel_critico = df_nivel_limpio.sort_values("tasa_retiro", ascending=False).iloc[0]
+            insights.append(
+                f"**Nivel más afectado:** El nivel **{nivel_critico['Nivel']}** presenta la mayor tasa de retiro "
+                f"({nivel_critico['tasa_retiro']}% ). Es el momento donde más estudiantes abandonan el sistema. "
+                f"Intervenir aquí tiene un alto potencial de impacto."
+            )
 
     return insights
 
 
 def generar_insight_departamento(fila: pd.Series, promedio_nacional_retiro: float) -> str:
     """
-    Genera un texto explicativo para un departamento específico.
+    Genera un insight accionable para un departamento específico.
     """
     diferencia = fila["tasa_retiro"] - promedio_nacional_retiro
+    estudiantes_retirados = int(fila["total"] * fila["tasa_retiro"] / 100)
 
-    if diferencia > 1.5:
-        comparacion = f"**{diferencia:.1f} puntos por encima** del promedio nacional"
-        tono = "situación más crítica"
-    elif diferencia < -1.5:
-        comparacion = f"**{abs(diferencia):.1f} puntos por debajo** del promedio nacional"
-        tono = "mejores resultados relativos"
+    if diferencia >= 2:
+        evaluacion = "se encuentra en una **situación crítica**"
+        recomendacion = "Se recomienda priorizar acciones de retención escolar, especialmente en los niveles de mayor abandono."
+    elif diferencia >= 0.5:
+        evaluacion = "está **por encima del promedio nacional**"
+        recomendacion = "Conviene reforzar el seguimiento a estudiantes en riesgo de retiro."
+    elif diferencia <= -2:
+        evaluacion = "muestra **mejores resultados** que el promedio nacional"
+        recomendacion = "Puede servir como referencia de buenas prácticas para otros departamentos."
     else:
-        comparacion = "cerca del promedio nacional"
-        tono = "situación similar al resto del país"
+        evaluacion = "se encuentra **cerca del promedio nacional**"
+        recomendacion = "Mantener el monitoreo y fortalecer las estrategias preventivas."
 
     return (
-        f"En **{fila['Departamento']}** se registraron {fila['total']:,} estudiantes. "
-        f"La tasa de retiro fue del **{fila['tasa_retiro']}%** ({comparacion}). "
-        f"Esto indica una {tono}."
+        f"En **{fila['Departamento']}** se registraron **{fila['total']:,}** estudiantes. "
+        f"La tasa de retiro fue del **{fila['tasa_retiro']}%** "
+        f"({diferencia:+.1f} puntos vs el promedio nacional de {promedio_nacional_retiro}%). "
+        f"Esto equivale a aproximadamente **{estudiantes_retirados:,}** estudiantes que abandonaron el ciclo. "
+        f"El departamento {evaluacion}. {recomendacion}"
     )
 
 
@@ -184,26 +199,22 @@ def run_analytics(solo_prueba: bool = False) -> Dict[str, Any]:
     brechas = calcular_brechas(df)
 
     print("Generando insights...")
-    insights = generar_insights_nacionales(indicadores, por_depto)
+    insights = generar_insights_nacionales(indicadores, por_depto, brechas)
 
-    # Guardar resultados para que el frontend los consuma fácilmente
+    # Guardar resultados
     DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
     por_depto.to_parquet(DATA_PROCESSED / "resumen_departamentos.parquet", index=False)
-    
-    # Guardar brechas
+
     for nombre, tabla in brechas.items():
         tabla.to_parquet(DATA_PROCESSED / f"brecha_{nombre}.parquet", index=False)
 
-    # Guardar indicadores e insights en un formato simple
     resultado = {
         "indicadores": indicadores,
         "insights": insights,
         "promedio_retiro_nacional": indicadores["tasa_retiro"],
     }
 
-    # También guardamos un JSON legible
-    import json
     with open(DATA_PROCESSED / "indicadores_nacionales.json", "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=2)
 
