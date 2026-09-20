@@ -1,0 +1,36 @@
+{
+  "indicadores": {
+    "total_estudiantes": 202618,
+    "tasa_promocion": 85.1,
+    "tasa_no_promocion": 8.5,
+    "tasa_retiro": 6.1,
+    "por_nivel": {
+      "Primaria": 55.3,
+      "Preprimaria": 19.8,
+      "Básico": 17.2,
+      "Diversificado": 7.6,
+      "Primaria de adultos": 0.1
+    },
+    "por_area": {
+      "Rural": 66.2,
+      "Urbana": 33.8
+    },
+    "por_sector": {
+      "Público": 83.1,
+      "Privado": 12.9,
+      "Cooperativa": 3.7,
+      "Municipal": 0.3
+    },
+    "por_sexo": {
+      "Hombre": 51.1,
+      "Mujer": 48.9
+    }
+  },
+  "insights": [
+    "En 2024 se registraron **202,618** inscripciones en el sistema educativo formal de Guatemala. De ellas, el **85.1%** fue promovido, el **8.5%** no promovido y el **6.1%** se retiró.",
+    "El departamento con mayor tasa de retiro es **Zacapa** (6.7% ). Esto está por encima del promedio nacional.",
+    "La mayor cantidad de estudiantes se concentra en **Primaria**. Es en los niveles de Básico y Diversificado donde suele observarse mayor abandono relativo.",
+    "Más de la mitad de los estudiantes estudia en área **rural**. Las brechas de resultados entre el área urbana y rural son uno de los puntos más importantes a monitorear."
+  ],
+  "promedio_retiro_nacional": 6.1
+}
